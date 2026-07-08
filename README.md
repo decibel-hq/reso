@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.png" alt="Reso-1 — Decibel Labs — expressive, streaming, tag-controllable TTS" width="100%">
+</p>
+
 # reso-tts
 
 Training pipeline for **Reso** voice models — expressive, streaming,
