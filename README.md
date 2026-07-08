@@ -1,32 +1,18 @@
 # reso-tts
 
-Training pipeline for **Reso** voice models — expressive, streaming, tag-controllable
-TTS by Decibel Labs. Teacher distillation → LoRA fine-tunes of Llama+SNAC
-architecture models (Orpheus now, Veena for Hindi later).
-
-Full design rationale and roadmap: [`docs/ROADMAP.txt`](docs/ROADMAP.txt).
-GPU session procedure: [`docs/A100_RUNBOOK.md`](docs/A100_RUNBOOK.md).
+Training pipeline for **Reso** voice models — expressive, streaming,
+tag-controllable TTS by Decibel Labs. Teacher distillation → LoRA
+fine-tunes of Llama+SNAC architecture models (Orpheus 3B, 24kHz).
 
 ## Status
 
-| Phase | State |
+| | |
 |---|---|
-| prompts/v1 English corpus (16,213 utterances, 6 categories) | ✅ done |
-| Teacher synthesis — 8,105 clips, ElevenLabs "adam", 24kHz | ✅ done |
-| QC (Whisper WER + rate + tag events): 7,342 pass / 8.87 h | ✅ done |
-| **run01**: LoRA r=64 on orpheus-3b, 3 epochs, loss 3.47 | ✅ done |
-| Eval: 198 heldout + 10 fresh samples, 0 degenerate | ✅ done |
-| Remaining 50% of corpus synthesis | next credit cycle |
-| Voice actor (bilingual en+hi, distribution rights in contract) | planned |
-| Hindi via Veena base | planned |
-
-## ⚠️ Distribution status of run01
-
-run01 is distilled from ElevenLabs output and is **ToS-bound: internal
-learning only**. HF publishing practice happens on a **PRIVATE** repo
-(see [`release/MODEL_CARD.md`](release/MODEL_CARD.md)) — the repo goes
-public only when a rights-clean model (voice-actor data) replaces it.
-Public-then-delete is not a remedy: downloads and mirrors are permanent.
+| prompts/v1 English corpus (16,213 utterances, 6 categories) | ✅ |
+| Teacher synthesis — 8,105 clips, ElevenLabs v3, 24kHz | ✅ |
+| QC (Whisper WER + rate + tag events): 7,342 pass / 8.87 h | ✅ |
+| run01: LoRA r=64 on orpheus-3b, 3 epochs, loss 3.47 | ✅ |
+| Eval: 198 heldout + 10 fresh samples, 0 degenerate | ✅ |
 
 ## Layout
 
@@ -41,8 +27,7 @@ data/             synth_state.db (source of truth), metadata/, qc/
                   (audio dirs gitignored — never commit audio)
 splits/           train.jsonl / heldout.jsonl (diagnostic, per-category)
 checkpoints/      run_config + eval samples tracked; weights gitignored
-docs/             ROADMAP.txt (the why), A100_RUNBOOK.md (the how)
-release/          HF model card draft + publishing checklist
+release/          HF model card + publishing checklist
 ```
 
 ## Quickstart (local demo, M-series Mac)
@@ -58,16 +43,7 @@ Tags: `<laugh> <chuckle> <sigh> <gasp> <whisper> <pause>` inline in text.
 Prompt convention: `reso: <text>` (baked into training). Generation needs
 `repetition_penalty >= 1.1`.
 
-## Multilingual direction
-
-Phase 2/3 base: [`kenpath/svara-tts-v1`](https://huggingface.co/kenpath/svara-tts-v1)
-(Apache 2.0, Orpheus lineage, drop-in token layout, 18 Indic languages +
-Indian English). Product shape: one model, a voice × language matrix —
-see [`docs/MULTILINGUAL_AND_MATRIX_PLAN.md`](docs/MULTILINGUAL_AND_MATRIX_PLAN.md).
-
 ## License
 
-[Apache 2.0](LICENSE) — same license as the base models (Orpheus, Svara).
-Attributions in [NOTICE](NOTICE). Note: run01 *weights* are additionally
-ToS-restricted (see distribution status above); the license here covers
-the code, corpus, and future rights-clean releases.
+[Apache 2.0](LICENSE) — same license as the base models.
+Attributions in [NOTICE](NOTICE).
