@@ -1,0 +1,84 @@
+{
+  "prompt_version": "v1",
+  "seed": 42,
+  "files": {
+    "arctic.jsonl": {
+      "rows": 1132,
+      "words": 10002,
+      "chars": 54420,
+      "est_hours": 1.0,
+      "categories": {
+        "phonetic": 1132
+      }
+    },
+    "edge.jsonl": {
+      "rows": 1200,
+      "words": 12425,
+      "chars": 73567,
+      "est_hours": 1.24,
+      "categories": {
+        "edge": 1200
+      }
+    },
+    "general.jsonl": {
+      "rows": 7000,
+      "words": 120051,
+      "chars": 640565,
+      "est_hours": 12.01,
+      "categories": {
+        "general": 7000
+      }
+    },
+    "harvard.jsonl": {
+      "rows": 720,
+      "words": 5742,
+      "chars": 28329,
+      "est_hours": 0.57,
+      "categories": {
+        "phonetic": 720
+      }
+    },
+    "normalization.jsonl": {
+      "rows": 1820,
+      "words": 15390,
+      "chars": 87463,
+      "est_hours": 1.54,
+      "categories": {
+        "normalization": 1820
+      }
+    },
+    "prosody.jsonl": {
+      "rows": 2781,
+      "words": 17374,
+      "chars": 96531,
+      "est_hours": 1.74,
+      "categories": {
+        "prosody": 2781
+      }
+    },
+    "tags.jsonl": {
+      "rows": 1560,
+      "words": 16444,
+      "chars": 100040,
+      "est_hours": 1.64,
+      "categories": {
+        "tags": 1560
+      }
+    }
+  },
+  "totals": {
+    "rows": 16213,
+    "words": 197428,
+    "chars": 1080915,
+    "est_hours_by_words": 19.74,
+    "est_hours_by_chars": 19.65,
+    "tag_token_counts": {
+      "<laugh>": 262,
+      "<chuckle>": 262,
+      "<sigh>": 262,
+      "<gasp>": 260,
+      "<whisper>": 261,
+      "<pause>": 263
+    }
+  }
+}

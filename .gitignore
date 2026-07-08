@@ -1,0 +1,16 @@
+# heavy / regenerable audio & model artifacts — HF is their distribution home
+data/raw/
+data/raw_flac/
+data/encoded/
+data/auditions/
+data/upload_*.tar
+checkpoints/**/adapter/
+checkpoints/**/merged/
+checkpoints/**/trainer/
+*.gguf
+.venv/
+prompts/v1/parts/
+__pycache__/
+
+# tracked on purpose: prompts/, splits/, data/metadata/, data/qc/,
+# data/synth_state.db (source of truth), checkpoints/**/samples/ (demo wavs)

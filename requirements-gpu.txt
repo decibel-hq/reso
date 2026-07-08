@@ -1,0 +1,6 @@
+-r requirements.txt
+torch
+unsloth
+datasets
+snac
+numpy

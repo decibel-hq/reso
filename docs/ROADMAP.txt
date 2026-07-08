@@ -1,0 +1,434 @@
+================================================================================
+DECIBEL TTS — RESEARCH NOTES & ROADMAP
+Audio model distillation, base-model selection, corpus design, and the
+English -> Hindi -> multi-Indic plan for Reso voice models.
+
+Status: research/planning notes (July 2026). Source of truth for WHY the
+decisions below were made. Implementation lives in decibel-tts/ (planned).
+================================================================================
+
+
+--------------------------------------------------------------------------------
+1. THE GOAL
+--------------------------------------------------------------------------------
+Build our own streaming TTS voice(s) for Reso / Decibel's realtime voice
+stack, without paying for voice actors before the pipeline is proven.
+
+The plan in one line:
+  Distill from a commercial teacher (ElevenLabs) to LEARN and validate the
+  entire pipeline cheaply -> then re-run the exact same pipeline with a hired
+  voice actor's recordings as the real dataset -> fine-tune an open base
+  model -> English first, Hindi/Hinglish next, multi-Indic later.
+
+Key mindset decisions:
+  * The PIPELINE is the deliverable of phase 1, not the English voice itself.
+    Everything (prompt selection -> synthesis -> QC -> encoding -> LoRA
+    training -> diagnostic eval) gets debugged once and reused per language.
+  * Iterate, don't front-load: generate ~5 hours of maximally diverse data,
+    train, listen, then generate more ONLY where the model is weak
+    ("numbers sound off -> +2 hours of normalization sentences").
+  * The corpus and pipeline are architecture-agnostic on purpose, so the
+    base-model choice is never a one-way door.
+
+
+--------------------------------------------------------------------------------
+2. DOES DISTILLATION EVEN WORK? (yes — with caveats)
+--------------------------------------------------------------------------------
+What we're doing is OUTPUT-LEVEL DISTILLATION (a.k.a. synthetic-data
+training / "hard" distillation): feed text into a big teacher TTS, keep the
+(text, audio) pairs, train a student on them. This is standard practice —
+many open speech models were bootstrapped exactly this way.
+
+Important framings:
+  * In TTS the TEXT IS THE LABEL, and we author it ourselves before
+    synthesis. There is no classic labeling problem. The real work is
+    (a) choosing text with good coverage and (b) FILTERING bad teacher
+    outputs.
+  * The student's ceiling is the teacher. Distillation compresses, it does
+    not improve — except that aggressive filtering can make the student
+    MORE consistent than the teacher (we throw away the teacher's bad days).
+  * Distribution collapse: synthetic-only audio has less acoustic diversity
+    than real speech. Mixing in real data later (the voice actor) fixes this.
+  * LEGAL: ElevenLabs ToS (like every commercial TTS API) prohibits using
+    outputs to train competing models. The ElevenLabs-derived data is for
+    LEARNING ONLY and must be discarded before anything ships. This is why
+    every metadata row carries a "source" field — so `source == "elevenlabs"`
+    can be selected and deleted wholesale later. Open-weight teachers
+    (e.g. Kokoro, F5-TTS, Chatterbox run locally) are the legal alternative
+    if synthetic data is ever needed at ship-time scale.
+
+Reverse pipeline worth remembering: real audio + Whisper pseudo-labels
+(how datasets like Emilia were built). Same downstream pipeline, the
+transcript just comes from ASR instead of being known upfront.
+
+
+--------------------------------------------------------------------------------
+3. BASE MODEL SELECTION
+--------------------------------------------------------------------------------
+Hard requirements:
+  * Streaming inference (feeding realtime voice agents / the SFU stack).
+  * Fine-tunable on consumer/prosumer GPU (LoRA on an L4-class card).
+  * Explicit EXPRESSIVE TAG control: passing <laugh> in text must make the
+    model actually laugh — consistently across ElevenLabs (teacher), the
+    voice actor (stage directions), and the fine-tuned model.
+  * Open weights, permissive license.
+
+Note: streaming is an INFERENCE property, not a training one. Training data
+is complete (text, clip) pairs regardless of architecture. "Supports
+streaming" constrains the architecture choice only.
+
+Candidates compared (state as of mid-2026):
+
+  CSM-1B (Sesame)      1B, Apache 2.0, Llama backbone + Mimi codec
+                       (24kHz, 12.5 tok/s, causal — excellent for streaming).
+                       Unique feature: CONVERSATIONAL CONTEXT CONDITIONING —
+                       conditions prosody on dialogue history (text+audio).
+                       Fine-tuning: Unsloth + community repo
+                       (github.com/davidbrowne17/csm-streaming), no official
+                       scripts. NO native expression tags. English-only base.
+
+  Orpheus (Canopy)     3B/1B/400M/150M, Apache 2.0, Llama backbone + SNAC
+                       codec (24kHz). Native streaming (~200ms). OFFICIAL
+                       fine-tuning scripts + Unsloth. NATIVE paralinguistic
+                       tags: <laugh>, <sigh>, <chuckle>, <gasp>, etc.
+                       Multilingual research releases incl. Hindi.
+
+  Chatterbox (Resemble) ~0.5B / Turbo 350M, MIT. Best raw quality (beat
+                       ElevenLabs in 63% blind preference). Streaming yes.
+                       Fine-tuning = community forks only. Emotion knob but
+                       no positional tags.
+
+  Kokoro-82M           Ruled out: training code never released — nothing to
+                       fine-tune.
+  F5-TTS / flow-matching family: ruled out for this use — non-autoregressive,
+                       generates whole utterance at once, streaming awkward.
+
+THE DECIDING FACTORS (in order of how they actually decided it):
+
+  a) Expressive tags requirement -> Orpheus. A tag is just text tokens; a
+     model laughs on <laugh> iff training data consistently pairs the tag
+     with an actual laugh at that position. Orpheus ships with tags already
+     trained in — the fine-tune only has to PRESERVE them (include tagged
+     examples so they don't fade). CSM would need every tag taught from
+     scratch (doable — Llama backbone, tags are tokens — but "installing"
+     a behavior needs much more data than "reinforcing" one).
+
+  b) The Indic roadmap -> Orpheus stack, decisively. VEENA by Maya Research
+     (huggingface.co/maya-research/Veena) is a 3B Llama + SNAC 24kHz
+     autoregressive streaming TTS for Hindi + English + code-mixed,
+     Apache 2.0, sub-80ms reported latency on H100. That is ARCHITECTURALLY
+     THE SAME STACK AS ORPHEUS. Choosing Llama+SNAC now means the Hindi
+     phase is a base-checkpoint swap (Orpheus -> Veena), not a new project:
+     same training code, same encoded-cache format, same configs. There is
+     NO CSM-family Hindi base to warm-start from — CSM's Hindi would be
+     new-language teaching (substantially more data than a voice fine-tune;
+     see the Speechmatics writeup on fine-tuning Sesame to new languages).
+
+  c) CSM's conversational-context conditioning is genuinely valuable for
+     Reso's conversational-agent positioning and is the reason CSM stays on
+     the "revisit later" list. The corpus deliberately supports it (multi-
+     turn prosody data with conversation_id/turn_index), so a CSM bake-off
+     later costs an afternoon of training compute, not a second project.
+
+DECISION: Phase 1 fine-tunes ORPHEUS (start 3B, drop to 1B if VRAM/latency
+push back). Chatterbox = quality benchmark reference. CSM = future bake-off
+for context-awareness.
+
+Audio format note: request pcm_24000 from ElevenLabs (raw PCM, 24kHz) —
+matches SNAC's (and Mimi's) native rate exactly. No MP3 round-trip, no
+resampling artifacts.
+
+
+--------------------------------------------------------------------------------
+4. TEXT CORPUS DESIGN (prompts v1)
+--------------------------------------------------------------------------------
+Philosophy: we are FINE-TUNING, not pretraining. The base model already
+knows English pronunciation (Orpheus: 100k+ hrs). The dataset teaches a
+VOICE and SPEAKING STYLE. So we need BALANCED coverage, not exhaustive
+coverage — the voice must stay consistent across every kind of sentence.
+
+Size math:
+  * ~700–900 short sentences ≈ 1 hour of audio ≈ ~9–10k words ≈ 50–60k chars.
+  * Single-voice fine-tune saturates around 3–5 hours; returns diminish
+    sharply after (20–30 hrs only makes sense for multiple voices / heavy
+    emotional range / headroom for aggressive filtering).
+  * ElevenLabs cost: ~50–60k characters per audio hour. 25 hrs ≈ 1.3–1.5M
+    chars — check tier pricing before committing to big numbers.
+  * START AT ~5 HOURS (~3,000–4,000 sentences), train, listen, scale only
+    the weak categories.
+
+The five corpus categories:
+
+  1. PHONETIC BACKBONE
+     - CMU Arctic prompt set: 1,132 sentences, greedily selected for diphone
+       coverage. File: http://festvox.org/cmu_arctic/cmuarctic.data
+       (verified live, 1,132 lines). Format per line:
+         ( arctic_a0001 "Author of the danger trail, Philip Steels, etc." )
+       Keep the arctic IDs as audio filenames — stable text<->audio pairing.
+       Caveat: early-1900s novel prose; fine for phonetics, dated in register
+       — must not be the whole corpus.
+     - Harvard sentences (720, phonetically balanced). Public domain.
+     NOTE: the CMU Arctic *audio databases* (bdl, slt, awb, ksp, ...) are
+     one hour each of OTHER PEOPLE'S VOICES reading these prompts — useless
+     to us; we only want the prompt text file.
+
+  2. NORMALIZATION TORTURE SET (~500 sentences)
+     Numbers, dates, currencies, phone numbers, URLs, acronyms, units.
+     LLM-generate targeted ("50 casual sentences each containing a price, a
+     date, a percentage..."). This is where TTS voices fall apart, and where
+     the teacher's/actor's delivery of "$1,499.99" must get captured.
+
+  3. PROSODY / CONVERSATIONAL SET (~500–1,000)
+     Questions, exclamations, fragments, parentheticals, lists, fillers
+     ("yeah, I mean—", "hmm, okay so"). DailyDialog-style corpora or
+     LLM-generated conversational register.
+     GENERATE AS SHORT DIALOGUES (pairs/triples of consecutive turns), not
+     isolated lines -> doubles as multi-turn context data for a future CSM
+     bake-off, nearly for free.
+
+  4. PARALINGUISTIC TAG SET
+     Canonical tags (ours, stable forever): <laugh> <chuckle> <sigh> <gasp>
+     <whisper> <pause>. A few hundred VERIFIED examples per tag, spread
+     across sentence positions (start/mid/end) — position is learned.
+     Tags with ~20 examples come out unreliable.
+
+  5. LENGTH SPREAD
+     One-word utterances ("No.", "Sure!") through 40-word sentences —
+     streaming latency behavior differs across lengths and the voice must be
+     stable at both ends.
+
+Text sources for scaling beyond v1: LibriTTS transcripts (~585 hrs worth of
+book text), DailyDialog-style corpora, Project Gutenberg, LLM-generated
+category fills. IndicVoices extempore transcripts for Hindi (see section 8).
+
+
+--------------------------------------------------------------------------------
+5. THE TAG SYSTEM (three-legged consistency)
+--------------------------------------------------------------------------------
+A tag works iff transcript-tag and acoustic-event co-occur at the same
+position, consistently, across ALL data sources. One canonical tag set,
+one adapter per backend:
+
+  ElevenLabs leg:   v3 audio tags, square brackets: <laugh> -> [laughs],
+                    also [sighs], [whispers], [excited], etc. The STORED
+                    transcript always keeps the canonical <laugh>.
+                    CAVEAT: v3 tags are probabilistic — sometimes ignored,
+                    sometimes the laugh lands elsewhere. Never trust the
+                    label blindly; verify (below) and drop failures,
+                    otherwise we train <laugh> -> silence and the tag dies.
+
+  Voice actor leg:  tag = stage direction at the exact word position
+                    ("Line 214: ... <laugh> ... — actually laugh here,
+                    mid-sentence"). Direction position matters.
+
+  Student leg:      canonical tag stays in training text verbatim.
+
+TAG VERIFICATION (the step people skip): Whisper transcribes laughter as
+"haha", "(laughs)", or nothing — so the QC filter is two-stage:
+  1. Strip tags from reference text, compute WER on the speech content.
+  2. Separately verify the acoustic event exists near the tag position —
+     audio-event detector (PANNs/AST-class laughter classifier) or Whisper's
+     own "(laughs)" emissions as a weak signal.
+
+
+--------------------------------------------------------------------------------
+6. QC & FILTERING PIPELINE
+--------------------------------------------------------------------------------
+Applies IDENTICALLY to teacher audio and human recordings (humans misread
+constantly too — the actor's takes go through the same filter).
+
+  * ASR check: Whisper (large-v3) transcription vs reference text -> WER.
+    Drop above threshold (~5–10% to start; tune later).
+  * Duration sanity: audio-length vs character-count ratio catches
+    truncations and rambles.
+  * Speaker-embedding similarity: catches voice drift / wrong-voice outputs.
+  * Tag/event verification: section 5.
+  * NEVER DELETE failing clips — write the verdict into metadata
+    ("qc": {"wer": 0.04, "events_verified": true, "passed": true}) and let
+    the split-maker filter on it. Thresholds get retuned; re-synthesis of
+    deleted data is money burned twice.
+
+Borrowed from AI4Bharat/IndicVoices (their schema is a mature template):
+  * DUAL TRANSCRIPTS: verbatim (what was actually said, incl. mispronun-
+    ciations, e.g. "इस्थान") vs normalized (canonical orthography "स्थान").
+    For TTS we need normalized orthography that is AUDIO-FAITHFUL — the two
+    columns exist to DETECT mismatches (else we teach the model that स्थान
+    is pronounced इस्थान). Keep both fields in metadata.
+  * The verification_report flag taxonomy (long_pauses, echo_present,
+    mispronunciation, skipping_words, low_volume, ...) — adopt as the
+    structure of our qc field rather than inventing our own.
+
+
+--------------------------------------------------------------------------------
+7. REPO / DATA LAYOUT (decibel-tts)
+--------------------------------------------------------------------------------
+decibel-tts/
+├── prompts/                       # versioned text corpus — FIRST-CLASS asset
+│   └── v1/{arctic,harvard,normalization,prosody,tags}.jsonl
+├── data/
+│   ├── raw/<lang>/<speaker>/      # original audio, read-only, sacred
+│   ├── processed/<lang>/<speaker>/# 24kHz mono, loudness-normalized
+│   ├── metadata/<lang>/<speaker>.jsonl   # text<->audio pairing, SOURCE OF TRUTH
+│   └── encoded/                   # per-base-model token cache
+│       ├── orpheus_snac/          # Orpheus AND Veena read this (same codec)
+│       └── csm_mimi/              # only if/when CSM bake-off happens
+├── splits/
+│   ├── train.jsonl                # SAME split across models = fair bake-off
+│   └── heldout.jsonl              # diagnostic, per-category (see below)
+├── scripts/
+│   ├── 00_synthesize_teacher.py   # prompts -> ElevenLabs -> raw/  (pcm_24000)
+│   ├── 01_normalize_audio.py      # raw -> processed
+│   ├── 02_normalize_text.py       # per-lang plugin (normalizers/en.py, hi.py)
+│   ├── 03_encode_<codec>.py       # processed -> encoded/<model>
+│   ├── 04_make_splits.py          # filters on qc.passed; splits by session
+│   ├── 05_filter_qc.py            # WER + duration + speaker-sim + tag events
+│   ├── train_lora.py
+│   └── generate_eval.py
+├── configs/                       # e.g. orpheus3b_lora_a100.yaml
+└── checkpoints/<run>/{adapter,samples}/
+
+Metadata row schema (everything downstream reads ONLY this, never guesses
+from paths):
+
+  {"id": "en_el_0214",
+   "text": "Oh man <laugh> you should have seen his face.",   // canonical tags
+   "verbatim": "...", "normalized": "...",
+   "audio": "processed/en/eleven_voiceX/clip_0214.wav",
+   "speaker": "eleven_voiceX", "lang": "en",
+   "source": "elevenlabs" | "human_va" | "self",   // ToS cleanup + provenance
+   "prompt_version": "v1",
+   "conversation_id": "conv_031", "turn_index": 2, // multi-turn / CSM-ready
+   "duration_s": 3.1,
+   "qc": {"wer": 0.05, "events_verified": true, "passed": true}}
+
+Splitting rules:
+  * Split by CONVERSATION and by RECORDING SESSION, never random-by-
+    utterance. Random splits leak dialogue context between train/heldout
+    and leak same-session acoustics for human audio.
+  * Heldout is DIAGNOSTIC: N sentences per category (tags, numbers/dates,
+    code-switch, questions, long-form) -> after each run the readout is
+    "numbers regressed, tags fine", not one opaque score.
+
+Rationale for the three structural anchors:
+  * raw/ immutable — reprocessing is always possible, re-recording is not.
+  * metadata-as-database — filenames are not a schema.
+  * per-model encoded caches — encoding is the slow step; training re-runs
+    far more often than encoding does.
+
+
+--------------------------------------------------------------------------------
+8. LANGUAGE ROADMAP
+--------------------------------------------------------------------------------
+PHASE 1 — ENGLISH (now)
+  Fine-tune Orpheus (3B first) on ElevenLabs-distilled English corpus.
+  Purpose: prove prompts -> synthesis -> QC -> encode -> LoRA -> diagnostic
+  heldout, end to end. Order of work: TEXT CORPUS FIRST, then audio
+  generation (the corpus is the dependency for teacher synthesis, the actor
+  script, and eval sets).
+
+PHASE 2 — HINDI / HINGLISH
+  Base checkpoint swap: Orpheus -> VEENA (already speaks Hindi + code-mix
+  natively) -> our voice fine-tuned onto it. Same codebase, same
+  encoded/orpheus_snac cache format, same configs; only 02_normalize_text.py
+  grows a Hindi normalizer.
+  Locked decision: DEVANAGARI is the canonical transcript script (what the
+  Hindi bases are trained on). Romanized/Hinglish input is a normalization
+  step, never stored as ground truth. Mixed script conventions are the
+  classic way code-switched TTS datasets go bad.
+
+PHASE 3 — MULTI-INDIC
+  Data cost dominates. Shelf to pull from: AI4Bharat ecosystem —
+  IndicVoices-R (speech-enhanced TTS-ready restoration of IndicVoices,
+  ~1,700 hrs, 22 languages), Rasa (studio-quality EXPRESSIVE Indic TTS
+  dataset), IIT Madras IndicTTS corpora. Base model: decide when we get
+  there (extended Veena / Orpheus multilingual / newer) — pipeline is
+  deliberately base-agnostic.
+
+IndicVoices (raw) usage rule:
+  ASR corpus, NOT a TTS corpus — phone-quality spontaneous speech, literal
+  <Persistent-noise-start> wrappers. A generative model trained on it
+  learns to PRODUCE the noise. Therefore:
+    IndicVoices        = TEXT donor (real spoken-Hindi extempore transcripts
+                         with fillers/restarts — the conversational register
+                         LLMs fake badly; CC-BY-4.0) + SCHEMA donor
+                         (dual transcripts, QC taxonomy, inline event tags).
+    IndicVoices-R/Rasa = AUDIO donor (when multi-speaker Indic audio needed).
+    Our actor+teacher  = THE VOICE.
+
+CHEAP-NOW / EXPENSIVE-LATER (do in Phase 1):
+  1. Hire a BILINGUAL voice actor; record English AND Hindi in the same
+     sessions (same person/mic/room = consistent Reso voice identity across
+     languages; a second studio hire later costs more and acoustics never
+     match). Tag stage directions in both languages.
+     Studio reality: ~2:1 studio-time to usable-audio; 3–4 usable hours is
+     a day of work.
+  2. Per-language PLUGGABLE QC verifier (Whisper large-v3 is acceptable for
+     Hindi WER; IndicWhisper/IndicConformer for Phase 3 languages). One
+     interface, per-lang implementations — same pattern as the text
+     normalizer.
+  3. code-switch as its OWN prompt category and heldout section from day
+     one. Hinglish is where Indian TTS products live or die — it needs a
+     diagnostic number, not vibes.
+
+Property of this plan: no speculative work. Every phase ships a usable
+model; the only pre-payment for the future is directory structure, metadata
+fields, and one extra recording session.
+
+
+--------------------------------------------------------------------------------
+9. REFERENCE LINKS
+--------------------------------------------------------------------------------
+Prompts / corpora
+  CMU Arctic prompts ......... http://festvox.org/cmu_arctic/cmuarctic.data
+  CMU Arctic project ......... http://festvox.org/cmu_arctic/
+  LibriTTS, Harvard sentences, DailyDialog — standard sources
+  IndicVoices / IndicVoices-R / Rasa / IndicTTS — AI4Bharat & IIT Madras
+
+Models
+  Orpheus (Canopy) ........... official fine-tune scripts + Unsloth; tags
+  Veena (Maya Research) ...... https://huggingface.co/maya-research/Veena
+                               3B Llama + SNAC 24kHz, hi/en/code-mix, Apache 2.0
+  CSM-1B (Sesame) ............ https://huggingface.co/sesame/csm-1b
+    Unsloth build ............ https://huggingface.co/unsloth/csm-1b
+    streaming + finetune ..... https://github.com/davidbrowne17/csm-streaming
+    new-language fine-tune ... https://blog.speechmatics.com/sesame-finetune
+  Chatterbox (Resemble) ...... MIT; quality benchmark reference
+
+Teacher
+  ElevenLabs v3 audio tags ([laughs], [sighs], ...); output format
+  pcm_24000. ToS: outputs must not train shipped models — learning only.
+
+
+--------------------------------------------------------------------------------
+10. COMPUTE
+--------------------------------------------------------------------------------
+Rent per-run, never buy; never idle a rented GPU between runs.
+  * Training: 1x A100 80GB (Runpod default, ~$1.3–1.9/hr), or H100 80GB if
+    priced under ~2x A100 that day. A LoRA over ~5 hrs of audio is a 2–4 hr
+    job -> <$10/run. Spot/interruptible + per-epoch checkpoints = half price.
+  * Debug/side-jobs (Whisper QC, SNAC encoding, QLoRA experiments):
+    RTX 4090 24GB on Vast (~$0.3–0.5/hr) or local.
+  * Pattern: persistent network volume holds encoded dataset + checkpoints;
+    GPU instances are disposable. Push encoded tokens (tiny) to a private
+    HF repo or the volume; generate heldout samples while the box is up;
+    kill instance; listen offline.
+  * Ruled out: buying an L4 (300 GB/s bandwidth — inference card, poor for
+    training; a used 3090/4090 beats it if owning hardware ever matters),
+    multi-GPU (pointless for 3B LoRA), 16GB tiers.
+  * GPU choice does not change output quality if the config is identical —
+    it changes iteration speed, and iteration is the quality loop.
+
+--------------------------------------------------------------------------------
+11. IMMEDIATE NEXT STEPS
+--------------------------------------------------------------------------------
+  1. Generate prompts/v1 — DONE (decibel-tts/prompts/v1/: 16,213 utterances,
+     ~197k words, ~19.7 est. hours; arctic 1,132 + harvard 720 + general
+     7,000 + normalization 1,820 + prosody 2,781 in 800 dialogues + tags
+     1,560 + edge 1,200; built/validated by scripts/build_prompts_v1.py,
+     manifest.json has the breakdown).
+  2. Build 00_synthesize_teacher.py against ElevenLabs (pcm_24000), pick
+     one voice, synthesize v1.  <- CURRENT STEP
+  3. Build 05_filter_qc.py (Whisper WER + duration + tag-event check).
+  4. Encode (SNAC), split (by conversation, diagnostic heldout), LoRA
+     fine-tune Orpheus 3B on an L4, listen, iterate on weak categories.
+================================================================================

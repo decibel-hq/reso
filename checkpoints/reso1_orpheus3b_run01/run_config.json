@@ -1,0 +1,14 @@
+{
+  "run": "reso1_orpheus3b_run01",
+  "base": "unsloth/orpheus-3b-0.1-ft",
+  "voice_prefix": "reso",
+  "splits": "splits",
+  "data": "data",
+  "max_seq_len": 4096,
+  "lora_r": 64,
+  "lr": 0.0002,
+  "epochs": 3.0,
+  "batch_size": 4,
+  "grad_accum": 4,
+  "max_steps": -1
+}

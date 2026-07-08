@@ -1,0 +1,4 @@
+requests
+tqdm
+faster-whisper
+soundfile
