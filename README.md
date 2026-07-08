@@ -57,3 +57,17 @@ python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt
 Tags: `<laugh> <chuckle> <sigh> <gasp> <whisper> <pause>` inline in text.
 Prompt convention: `reso: <text>` (baked into training). Generation needs
 `repetition_penalty >= 1.1`.
+
+## Multilingual direction
+
+Phase 2/3 base: [`kenpath/svara-tts-v1`](https://huggingface.co/kenpath/svara-tts-v1)
+(Apache 2.0, Orpheus lineage, drop-in token layout, 18 Indic languages +
+Indian English). Product shape: one model, a voice × language matrix —
+see [`docs/MULTILINGUAL_AND_MATRIX_PLAN.md`](docs/MULTILINGUAL_AND_MATRIX_PLAN.md).
+
+## License
+
+[Apache 2.0](LICENSE) — same license as the base models (Orpheus, Svara).
+Attributions in [NOTICE](NOTICE). Note: run01 *weights* are additionally
+ToS-restricted (see distribution status above); the license here covers
+the code, corpus, and future rights-clean releases.

@@ -1,0 +1,8 @@
+reso-tts
+Copyright 2026 Decibel Labs
+
+This project builds on:
+- Orpheus TTS (canopylabs/orpheus-3b-0.1-ft), Apache License 2.0
+- Svara-TTS (kenpath/svara-tts-v1), Apache License 2.0 — planned multilingual base
+- SNAC codec (hubertsiuzdak/snac_24khz), MIT License
+- CMU Arctic prompt set (festvox.org/cmu_arctic) and Harvard sentences, public domain
